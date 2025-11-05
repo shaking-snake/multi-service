@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from .DijkstraGnn import get_pyg_data_from_nx, generate_expert_label, GNNPretrainModel, GLOBAL_STATS
+from .DijkstraGnn import get_pyg_data_from_nx, generate_expert_label, GNNPretrainModel, GLOBAL_STATS, DynamicGraphDataset, DataLoader
 from ...Env.NetworkGenerator import TopologyGenerator
 
 if __name__ == "__main__":
