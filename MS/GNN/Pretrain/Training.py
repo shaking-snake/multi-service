@@ -45,7 +45,7 @@ if __name__ == "__main__":
   print("🚀 开始阶段 1B: GNN 主体预训练 (终极冲刺 - Focal Loss + 热重启)...")
 
   # --- 1. 超参数配置 ---
-  EPOCHS = 400          # 保持 400，配合热重启需要更多轮次
+  EPOCHS = 3000          # 保持 400，配合热重启需要更多轮次
   GNN_DIM = 256
   NUM_LAYERS = 6
   BATCH_SIZE = 128       
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
     model.load_state_dict(new_state_dict)
     print("✅ 模型权重加载成功！")
-    start_epoch = 100
+    start_epoch = 1
 
   model = model.to(device)
   if torch.cuda.device_count() > 1:
@@ -91,7 +91,7 @@ if __name__ == "__main__":
   # eta_min=1e-6: 学习率最低降到 1e-6
   from torch.optim import lr_scheduler
   scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-    optimizer, T_0=50, T_mult=1, eta_min=1e-6
+    optimizer, T_0=100, T_mult=1, eta_min=1e-7
   )
 
   # [核心升级 2] 使用 Focal Loss 替代 BCE
