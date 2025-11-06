@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch_geometric.nn import DataParallel
 from torch_geometric.loader import DataListLoader
+from torch.optim.swa_utils import AveragedModel, SWALR
 from tqdm import tqdm
 import torch.multiprocessing
 import os
@@ -52,7 +53,7 @@ if __name__ == "__main__":
   SAMPLES_PER_EPOCH = 6400
   
   # [调整] 配合热重启，初始 LR 可以稍微给高一点点，让它有能力跳出坑
-  LEARNING_RATE = 2e-4  
+  LEARNING_RATE = 2e-7
   
   NODE_FEAT_DIM = 5
   EDGE_FEAT_DIM = 2
@@ -68,7 +69,11 @@ if __name__ == "__main__":
   # --- 2. 初始化组件 ---
   topo_gen = TopologyGenerator(num_nodes_range=(20, 30), m_ba=2)
   model = GNNPretrainModel(NODE_FEAT_DIM, GNN_DIM, EDGE_FEAT_DIM, NUM_LAYERS)
-
+  
+  swa_model = AveragedModel(model) # 创建 SWA 模型影子
+  swa_start = 300 # 从第 300 轮开始收集 SWA 权重
+  
+  
   start_epoch = 0
   if RESUME_PATH is not None and os.path.exists(RESUME_PATH):
     print(f"🔄 正在从 {RESUME_PATH} 加载检查点...")
@@ -76,7 +81,7 @@ if __name__ == "__main__":
     new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
     model.load_state_dict(new_state_dict)
     print("✅ 模型权重加载成功！")
-    start_epoch = 0
+    start_epoch = 300
 
   model = model.to(device)
   if torch.cuda.device_count() > 1:
@@ -84,14 +89,14 @@ if __name__ == "__main__":
     model = DataParallel(model)
       
   optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5) # [微调] 加一点点 weight_decay 防止过拟合
-
+  swa_scheduler = SWALR(optimizer, swa_lr=1e-5)
   # [核心升级 1] 使用余弦退火热重启调度器
   # T_0=50: 首次重启周期为 50 Epoch
   # T_mult=1: 之后每次重启周期保持 50 Epoch (你可以设为 2 让周期变长)
   # eta_min=1e-6: 学习率最低降到 1e-6
   from torch.optim import lr_scheduler
   scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-    optimizer, T_0=50, T_mult=1, eta_min=1e-7
+    optimizer, T_0=50, T_mult=2, eta_min=1e-10
   )
 
   # [核心升级 2] 使用 Focal Loss 替代 BCE
@@ -99,7 +104,7 @@ if __name__ == "__main__":
   # gamma=2.0: 标准的困难样本聚焦参数
   loss_fn = FocalLoss(alpha=0.85, gamma=2.0, logits=True)
 
-  best_acc = 0.0
+  best_acc = 0.9975
   # --- 3. 训练循环 ---
   for epoch in range(start_epoch, EPOCHS):
     model.train()
@@ -136,9 +141,8 @@ if __name__ == "__main__":
     
     # 注意：CosineAnnealingWarmRestarts 需要在每次 step() 后更新，或者每 epoch 更新
     # 这里我们在 epoch 结束时更新。注意它不需要传入验证集 loss。
-    scheduler.step(epoch + 1 / EPOCHS) # 使用当前进度更新
-    # 更标准的用法是直接 scheduler.step()，取决于你想怎么控制周期，这里简单用：
-    scheduler.step()
+
+    scheduler.step(epoch + 1 / EPOCHS) # 原来的调度器
 
     print(f"Epoch {epoch+1} 完成. Avg Loss: {avg_loss:.4f}, Avg Acc: {avg_acc:.2%}, LR: {current_lr:.2e}")
 
