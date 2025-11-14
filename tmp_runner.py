@@ -1,128 +1,120 @@
+# 文件名: tmp_runner.py
+# (确保此文件在项目根目录)
+
 import os
 import sys
 import networkx as nx
 from mininet.net import Mininet
 from mininet.topo import Topo
-from mininet.node import OVSKernelSwitch, Controller
+from mininet.node import OVSKernelSwitch, RemoteController
 from mininet.link import TCLink
 from mininet.log import setLogLevel
-
-# --- 导入环境文件 ---
+import numpy as np
+from mininet.node import OVSKernelSwitch, OVSController 
+from mininet.cli import CLI
+from mininet.link import TCLink
+from functools import partial
+# --- 导入你的环境文件 ---
 from MS.Env.NetworkGenerator import TopologyGenerator
 from MS.Env.FlowGenerator import FlowGenerator, FlowType
 from MS.Env.MininetController import get_flow_fingerprint, measure_path_qos
+import torch
+from MS.LSTM.Pretrain.TmpClassifier import RNNClassifier #
+# ========================================
 
-# -----------------------------------------------
-# 创建一个自定义拓扑，将 NetworkX Graph 转换为 Mininet Topo
-# -----------------------------------------------
 class GraphTopo(Topo):
-  """
-  一个 Mininet 拓扑，它从 NetworkGenerator 的 nx.Graph 构建。
-  我们假设 G 中的节点是 *交换机*。
-  我们为 G 中的每个节点（交换机）连接一个 *主机*。
-  """
-  def __init__(self, g: nx.Graph, **opts):
+  def __init__(self, blueprint_g: nx.Graph, **opts):
     Topo.__init__(self, **opts)
     
-    # self.g = g
-    
-    # 1. 创建交换机 (基于 G 的节点)
-    for node_id in g.nodes():
-      self.addSwitch(f's{node_id}')
-      
-      # 2. 为每个交换机添加一个主机
+    for node_id in blueprint_g.nodes():
+      self.addSwitch(f's{node_id}', protocols='OpenFlow13')
       self.addHost(f'h{node_id}')
-      
-      # 3. 添加主机到交换机的连接 (大带宽, 低延迟)
-      self.addLink(f'h{node_id}', f's{node_id}', bw=1000, delay='0.1ms')
+      self.addLink(f'h{node_id}', f's{node_id}', bw=100, delay='0.1ms')
 
-    # 4. 创建交换机之间的连接 (基于 G 的边)
-    for u, v, data in g.edges(data=True):
-      bw = data.get('bandwidth', 1000)
+    for u, v, data in blueprint_g.edges(data=True):
+      bw = data.get('bandwidth', 100)
       delay = f"{data.get('delay', 1)}ms"
-      
       self.addLink(f's{u}', f's{v}', bw=bw, delay=delay)
-
 
 def run_simulation():
   """主运行函数"""
+  net = None # 【新】确保 net 在 try/finally 外部定义
   
-  # --- 步骤 1: 生成拓扑 [NetworkGenerator] ---
-  print("--- 步骤 1: 生成拓扑 [NetworkGenerator] ---")
-  topo_gen = TopologyGenerator(num_nodes_range=(5, 8)) # 5-8个节点
-  g = topo_gen.generate_topology()
-  print(f"拓扑生成完毕: {len(g.nodes())} 个节点 (交换机), {len(g.edges())} 条边。")
+  try:
+    # --- 步骤 1: 生成拓扑 (不变) ---
+    print("--- 步骤 1: 生成拓扑 [NetworkGenerator] ---")
+    topo_gen = TopologyGenerator(num_nodes_range=(5, 8))
+    g = topo_gen.generate_topology()
+    print(f"拓扑生成完毕: {len(g.nodes())} 个节点, {len(g.edges())} 条边。")
 
-  # --- 步骤 2: 启动 Mininet ---
-  print("\n--- 步骤 2: 启动 Mininet ---")
-  
-  mn_topo = GraphTopo(g)
-  net = Mininet(
-    topo=mn_topo,
-    switch=OVSKernelSwitch,  # 必须使用 OVS 交换机
-    link=TCLink,             # 必须使用 TCLink 以支持 QoS
-    controller=None          # 不使用外部 SDN 控制器
-  )
-  
-  net.start()
-  print("Mininet 启动。")
-  # (可选) net.pingAll()
+    # --- 步骤 2: 启动 Mininet ---
+    print("\n--- 步骤 2: 启动 Mininet ---")
+    RemoteCtrl = partial(RemoteController, ip='127.0.0.1', port=6633)
 
-  # --- 步骤 3: 生成流配置 [FlowGenerator] ---
-  print("\n--- 步骤 3: 生成流配置 [FlowGenerator] ---")
-  flow_gen = FlowGenerator()
-  flow_type, flow_profile = flow_gen.get_random_flow()
-  print(f"已选择流类型: {flow_type.name}")
+    net = Mininet(
+      topo=GraphTopo(g),
+      switch=OVSKernelSwitch,
+      link=TCLink,
+      controller=RemoteCtrl
+    )
 
-  # --- 步骤 4.A: 测试流指纹生成 (用于 阶段 1.A) ---
-  print("\n--- 步骤 4.A: 测试流指纹生成 [MininetController] ---")
-  
-  # 4.A.1: 选择源/目的交换机 ID
-  s_id, d_id = topo_gen.select_source_destination()
-  # 4.A.2: 获取 Mininet 中的 *主机* 对象
-  S_host = net.get(f'h{s_id}')
-  D_host = net.get(f'h{d_id}')
-  
-  print(f"源主机: h{s_id} ({S_host.IP()})")
-  print(f"目的主机: h{d_id} ({D_host.IP()})")
+    net.start()
 
-  # 4.A.3: 调用 MininetController!
-  fingerprint_matrix = get_flow_fingerprint(S_host, D_host, flow_profile)
-  
-  if fingerprint_matrix is not None:
+    # CLI(net)
+    # --- 步骤 2.B: 测试 Mininet 连通性 (pingAll) ---
+    print("\n--- 步骤 2.B: 测试 Mininet 连通性 (pingAll) ---")
+    packet_loss_percentage = net.pingAll()
+    
+    if packet_loss_percentage == 100:
+      print(f"--- 警告: 出现 {packet_loss_percentage:.1f}% 丢包 ---")
+      # raise Exception("Mininet 连通性测试失败!")
+    else:
+      print(f"--- 连通性测试成功 ({packet_loss_percentage}% 丢包) ---")
+
+    print("\n--- 步骤 3: 生成流配置 [FlowGenerator] ---")
+    flow_gen = FlowGenerator()
+    flow_type, flow_profile = flow_gen.get_random_flow()
+    # 【关键】保存真实标签
+    true_class_name = flow_type.name 
+    print(f"已选择流类型 (真实标签): {true_class_name}")
+
+    # --- 步骤 4.A (保持不变) ---
+    print("\n--- 步骤 4.A: 测试流指纹生成 [MininetController] ---")
+    s_id, d_id = topo_gen.select_source_destination()
+    S_host = net.get(f'h{s_id}')
+    D_host = net.get(f'h{d_id}')
+    
+    fingerprint_matrix = get_flow_fingerprint(S_host, D_host, flow_profile)
+    
+    if fingerprint_matrix is None:
+      print("\n--- 指纹生成失败! ---")
+      raise Exception("无法生成指纹, 终止测试。")
+
     print("\n--- 指纹生成成功! ---")
-    print(f"已为 {flow_type.name} 流获取了指纹。")
     print(f"指纹矩阵形状: {fingerprint_matrix.shape}")
-    # print(fingerprint_matrix)
-  else:
-    print("\n--- 指纹生成失败! ---")
+    print(fingerprint_matrix)
 
-  # --- 步骤 4.B: 测试 QoS 测量 (用于 阶段 2) ---
-  print("\n--- 步骤 4.B: 测试 QoS 测量 (RL step) ---")
-  
-  # 这是一个“虚拟”的路径，在你的 RL 中，它应该来自 GNN 的输出
-  # 这里我们只测试默认路径（即 s_id 和 d_id 之间的最短路径）
-  dummy_path = [s_id, d_id] 
-  print(f"正在测试路径 {dummy_path} 的 QoS...")
-  
-  # 4.B.1: 调用 MininetController!
-  reward = measure_path_qos(S_host, D_host, dummy_path, flow_profile)
-  
-  print(f"\n--- QoS 测量成功! ---")
-  print(f"路径 {dummy_path} 在承载 {flow_type.name} 流时的奖励为: {reward}")
-  
-  # --- 步骤 5: 清理 ---
-  print("\n--- 步骤 5: 停止 Mininet ---")
-  net.stop()
+  except Exception as e:
+      print(f"\n--- 仿真出错 ---")
+      print(e)
+      import traceback
+      traceback.print_exc()
+      
+  finally:
+      # 确保 Mininet 总是被停止
+      if net:
+        print("\n--- 步骤 5: 停止 Mininet ---")
+        net.stop()
+      
+      # 确保 Mininet 被彻底清理
+      print("INFO: 运行 mn -c 以防万一...")
+      os.system('sudo mn -c')
 
 
 if __name__ == '__main__':
-    # 设置 Mininet 的日志级别
-    setLogLevel('info')
+    # setLogLevel('info')
     
-    # 检查是否以 root 身份运行
     if os.getuid() != 0:
-      print("错误：此脚本必须以 root 权限 (sudo) 运行。")
-      print("请使用: sudo python tmp_runner.py")
+        print("错误：此脚本必须以 root 权限 (sudo) 运行。")
     else:
-      run_simulation()
+        run_simulation()

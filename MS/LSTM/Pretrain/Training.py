@@ -18,7 +18,7 @@ LEARNING_RATE = 1e-4
 RNN_HIDDEN_DIM = 128 
 TEST_SET_SIZE = BATCH_SIZE * 300   
 TRAIN_SET_SIZE = BATCH_SIZE * 500 
-PRETRAINED_PATH = "./MS/LSTM/pretrained-model.pth"
+PRETRAINED_PATH = "./MS/LSTM/Pretrain/Classify-model.pth"
 
 def evaluate(model, test_loader, criterion, device):
   """在测试集上评估模型的性能"""
@@ -133,7 +133,7 @@ def train_phase_1a():
       
       # 仅保存 LSTM Body (preference_module) 的权重
       torch.save(
-        model.preference_module.state_dict(), 
+        model.state_dict(), 
         PRETRAINED_PATH
       )
   print(f"最佳测试准确率: {best_test_acc:.2f}%. 保存 [LSTM Body] 权重到 {PRETRAINED_PATH}")

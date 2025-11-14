@@ -6,6 +6,7 @@ from mininet.net import Mininet
 from enum import Enum # 需要导入 FlowGenerator 中的 Enum
 import numpy as np
 import sys
+import signal
 
 from scapy.all import rdpcap
 from scapy.layers.inet import IP
@@ -298,13 +299,11 @@ def run_traffic_capture(S_host, D_host, flow_profile, N_PACKETS=50):
   if mode == 'udp':
     iperf_server_cmd += ' -u'
   
-  D_host.cmd(f'{iperf_server_cmd} &')
-  # -----------------------------------
+  D_host.popen(iperf_server_cmd)
 
-  # 【修复】 动态查找正确的接口名，而不是假设 [0]
   correct_intf = None
   for intf in S_host.intfNames():
-    if intf != 'lo':
+    if intf != 'lo' :
       correct_intf = intf
       break
   
@@ -313,32 +312,26 @@ def run_traffic_capture(S_host, D_host, flow_profile, N_PACKETS=50):
     D_host.cmd('kill %iperf')
     return None
 
-  # 使用 -c N_PACKETS (它会自动退出)
   capture_command = f'tcpdump -i {correct_intf} -c {N_PACKETS} -w {temp_pcap_file}'
   
   print(f"INFO: 启动 tcpdump (在 {correct_intf} 上监听)...")
+
   # B. 使用 Popen 启动 tcpdump
   tcpdump_proc = S_host.popen(capture_command, shell=True)
 
   # C. 等待 tcpdump 启动
   time.sleep(0.5) 
-  
+
   # D. 启动 iperf client (阻塞, 运行 5 秒)
   print("INFO: 启动 iperf client...")
-  client_cmd = f'iperf -c {D_host.IP()} -p 5001 -{mode[0]} -b {rate} -t 5'
-  S_host.cmd(client_cmd) 
-  print("INFO: iperf client 结束。")
+  client_cmd = f'iperf -c {D_host.IP()} -p 5001 -{mode[0]} -b {rate} -t 60'
+  client_proc = S_host.popen(client_cmd, shell=True) 
 
-  # E. 【关键】等待 tcpdump 进程结束
-  # 因为 iperf 运行了5秒 (产生了数千个包),
-  # tcpdump -c 50 会在 iperf 结束前 *早就* 捕获 50 个包并自动退出了。
-  # .wait() 会立即返回，不会挂起。
+  # F. 等待进程被清理 (现在 .wait() 不会挂起)
   print("INFO: 等待 tcpdump 写入文件...")
   tcpdump_proc.wait()
   print("INFO: tcpdump 结束。")
-
-  # 清理 iperf server 进程
-  D_host.cmd('kill %iperf')
+  client_proc.terminate()
   
   return temp_pcap_file
 
