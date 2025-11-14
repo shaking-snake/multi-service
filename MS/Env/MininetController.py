@@ -313,8 +313,6 @@ def run_traffic_capture(S_host, D_host, flow_profile, N_PACKETS=50):
     return None
 
   capture_command = f'tcpdump -i {correct_intf} -c {N_PACKETS} -w {temp_pcap_file}'
-  
-  print(f"INFO: 启动 tcpdump (在 {correct_intf} 上监听)...")
 
   # B. 使用 Popen 启动 tcpdump
   tcpdump_proc = S_host.popen(capture_command, shell=True)
@@ -322,15 +320,11 @@ def run_traffic_capture(S_host, D_host, flow_profile, N_PACKETS=50):
   # C. 等待 tcpdump 启动
   time.sleep(0.5) 
 
-  # D. 启动 iperf client (阻塞, 运行 5 秒)
-  print("INFO: 启动 iperf client...")
+  # D. 启动客户机，发送流
   client_cmd = f'iperf -c {D_host.IP()} -p 5001 -{mode[0]} -b {rate} -t 60'
   client_proc = S_host.popen(client_cmd, shell=True) 
 
-  # F. 等待进程被清理 (现在 .wait() 不会挂起)
-  print("INFO: 等待 tcpdump 写入文件...")
   tcpdump_proc.wait()
-  print("INFO: tcpdump 结束。")
   client_proc.terminate()
   
   return temp_pcap_file
