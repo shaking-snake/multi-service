@@ -222,8 +222,8 @@ class GraphTopo(Topo):
 def get_a_mininet(g: nx.Graph, remote_port=6633):
   RemoteCtrl = partial(RemoteController, ip='127.0.0.1', port=remote_port)
 
-  setLogLevel('error')
-  
+  # setLogLevel('error')
+
   net = Mininet(
     topo=GraphTopo(g),
     switch=OVSKernelSwitch,

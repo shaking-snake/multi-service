@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 
 # 归一化常量 (必须在预训练和 RL 阶段保持一致)
 MIN_PACKET_SIZE = 40.0   # 最小包 (e.g., TCP ACK)
-MAX_PACKET_SIZE = 1514.0 # 最大包 (e.g., Ethernet MTU)
+MAX_PACKET_SIZE = 1600.0 # 最大包 (e.g., Ethernet MTU)
 MIN_IAT = 0.0          
 MAX_IAT = 0.200      # 200 毫秒 (假设的最大观测 IAT)
 
@@ -20,7 +20,7 @@ FLOW_TYPES = {
 }
 
 NUM_CLASSES = len(FLOW_TYPES)
-N_PACKETS = 100 # 指纹长度 N
+N_PACKETS = 30 # 指纹长度 N
 
 def normalize_fingerprint(fp: np.ndarray) -> np.ndarray:
   """
