@@ -26,7 +26,7 @@ from tqdm import tqdm # 用于显示进度条
 def run_live_training():
   
   # 训练参数
-  LEARNING_RATE = 0.001
+  LEARNING_RATE = 4e-3
   TOTAL_BATCH = 200
   ACCUMULATION_STEPS = 128  # 梯度累积
   TRAINING_STEPS = ACCUMULATION_STEPS*TOTAL_BATCH  # 我们总共生成 128*200 个样本
@@ -39,7 +39,7 @@ def run_live_training():
   RNN_LAYERS = 2           # RNN 层数
   NUM_CLASSES = 3          # 3个类别 (VOIP, STREAMING, INTERACTIVE)
   HIDDEN_DIM  = 256        # 
-  
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   
   # 初始化 PyTorch 组件
 
@@ -94,7 +94,7 @@ def run_live_training():
       flow_gen = FlowGenerator()   #实例化生成器 
 
       info(f"==== 开始在线训练 (共 {TRAINING_STEPS} 个数据), 每批次 {ACCUMULATION_STEPS} 个数据=====")
-      
+      info(f"==== 使用设备：{device}")
       pbar = tqdm(range(TRAINING_STEPS))
       correct_predictions = 0
       total_loss = 0.0
@@ -114,6 +114,11 @@ def run_live_training():
           duration_sec=FLOW_DURATION,
           n_packets_to_capture=N_PACKETS_TO_CAPTURE
         ).float()
+
+        # if i < 20:
+        #   pbar.write(f"[Debug] Flow {i} Type: {flow_type.name}")
+        #   pbar.write(f"[Debug] Tensor {i} Shape: {input_tensor.shape}")
+        #   pbar.write(f"[Debug] Tensor {i} Data:  {input_tensor}")
 
         logits = model(input_tensor)            # 向前传播
         loss = criterion(logits, label_tensor)  # 计算损失
@@ -141,15 +146,11 @@ def run_live_training():
           current_lr = optimizer.param_groups[0]['lr']
 
           # 打印当前训练情况
-          pbar.set_postfix({
-            'Loss': f'{avg_loss:.4f}', 
-            'Acc': f'{acc:.2%}',
-            'LR': f'{current_lr:.1e}'
-          })
+          pbar.write({f'Loss:{avg_loss:.4f} Acc: {accuracy:.2%} LR: {current_lr:.1e}'})
 
           # 保存最佳模型
           if best_acc < accuracy:
-            torch.save(model.lstm.state_dict(), Lstm_PATH)
+            torch.save(model.preference_module.state_dict(), Lstm_PATH)
             torch.save(model.state_dict(), Classifier_PATH)
             best_acc = accuracy
 

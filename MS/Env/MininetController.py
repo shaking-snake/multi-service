@@ -360,29 +360,14 @@ def send_packet_and_capture(
     # print("[Net] 清理进程...")
     # 清理 tshark
     if tshark_proc:
-      try:
-        tshark_proc.terminate()
-        # 给它 1 秒钟时间去死，不行就强杀
-        tshark_proc.wait(timeout=1) 
-      except subprocess.TimeoutExpired:
-        tshark_proc.kill()
+      tshark_proc.kill()
     
     # 清理客户端
     if client_proc:
-      try:
-        client_proc.terminate()
-        client_proc.wait(timeout=1)
-      except subprocess.TimeoutExpired:
-        client_proc.kill() # 确保杀死
-    
+      client_proc.kill() # 确保杀死
+    # 清理服务端
     if server_proc:
-      try:
-        server_proc.terminate()
-        server_proc.wait(timeout=1)
-      except subprocess.TimeoutExpired:
-        serve_proc.kill()
-    # 清理服务端 (强制杀)
-    server.cmd('killall -9 ITGRecv')
+      server_proc.kill()
 
   # print(f"[Capture] 捕获完成. 获得 {len(feature_matrix)} 个向量。")
   fingerprint_tensor = torch.tensor(feature_matrix, dtype=float)
