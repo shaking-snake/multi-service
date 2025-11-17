@@ -3,6 +3,7 @@ import sys
 import networkx as nx
 import numpy as np
 import time
+import traceback
 from functools import partial
 from mininet.topo import Topo
 from mininet.net import Mininet
@@ -26,7 +27,7 @@ from tqdm import tqdm
 def run_live_training():
   
   # 训练参数
-  LEARNING_RATE = 4e-3
+  LEARNING_RATE = 1e-3
   TOTAL_BATCH = 200
   ACCUMULATION_STEPS = 128  # 梯度累积
   TRAINING_STEPS = ACCUMULATION_STEPS*TOTAL_BATCH  # 生成样本数
@@ -38,7 +39,7 @@ def run_live_training():
   INPUT_DIM = 2            # 2个参数 (delay, IAT)
   RNN_LAYERS = 2           # RNN 层数
   NUM_CLASSES = 3          # 3个类别 (VOIP, STREAMING, INTERACTIVE)
-  HIDDEN_DIM  = 256        # 
+  HIDDEN_DIM  = 128        # 
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   
   # 初始化 PyTorch 组件
@@ -50,13 +51,23 @@ def run_live_training():
     rnn_layers=RNN_LAYERS
     )
 
-  try:
-    model.load_state_dict(torch.load(Classifier_PATH))
-  except Exception as e:
-    print(f"模型加载失败：\n {e}")
+  model = model.to(device)
+  load_path = None
+  if load_path != None:
+    try:
+      model.load_state_dict(torch.load(load_path))
+      print(f"[ms] 载入模型成功")
+    except Exception as e:
+      print(f"[ms] 模型加载失败：\n {e}")
+      traceback.print_exc()
+      return
 
-  criterion = nn.CrossEntropyLoss()
-  optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+  criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
+  optimizer = optim.Adam(
+    model.parameters(), 
+    lr=LEARNING_RATE, 
+    weight_decay=1e-4)
+
 
   """
     mode='min' : 我们希望监控的指标(loss)越小越好
@@ -69,7 +80,7 @@ def run_live_training():
     optimizer, 
     mode='min', 
     factor=0.5, 
-    patience=10
+    patience=3
   )
 
   # 将模型置于训练模式
@@ -88,16 +99,15 @@ def run_live_training():
 
   try:
     with get_a_mininet(g) as net:
-      print("======网络已启动=======")
-      print(net.hosts)
+      print(f"[ms] 网络已启动")
       net.pingAll()
       
       server, client = net.get("h1", "h2")
 
       flow_gen = FlowGenerator()   #实例化生成器 
 
-      print(f"==== 开始在线训练 (共 {TRAINING_STEPS} 个数据), 每批次 {ACCUMULATION_STEPS} 个数据=====")
-      print(f"==== 使用设备：{device}")
+      print(f"[ms] 开始在线训练 (共 {TRAINING_STEPS} 个数据), 每批次 {ACCUMULATION_STEPS} 个数据")
+      print(f"[ms] 使用设备：{device}")
       pbar = tqdm(range(TRAINING_STEPS))
       correct_predictions = 0
       total_loss = 0.0
@@ -118,6 +128,9 @@ def run_live_training():
           n_packets_to_capture=N_PACKETS_TO_CAPTURE
         ).float()
 
+        input_tensor = input_tensor.to(device)
+        label_tensor = label_tensor.to(device)
+
         # if i < 20:
         #   pbar.write(f"[Debug] Flow {i} Type: {flow_type.name}")
         #   pbar.write(f"[Debug] Tensor {i} Shape: {input_tensor.shape}")
@@ -136,14 +149,14 @@ def run_live_training():
           correct_predictions += 1
         
         append_matrix_to_file(
-          tensor=input_tensor,
+          tensor=input_tensor.detach().cpu(),
           filename=f"./train-log/Epoch{epoch}/{flow_type.name}-log.log",
           flow_id=i+1
           )
 
         if (i+1) % ACCUMULATION_STEPS == 0:
           
-          torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+          torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
           # 更新模型
           optimizer.step()
@@ -171,12 +184,11 @@ def run_live_training():
           epoch = epoch+1
 
       info(f"====训练完成====\n")
-      print(f"best acc: {best_acc}")
+      print(f"[ms] 最佳准确率模型: {best_acc}")
 
   except Exception as e:
     info(f"\n--- 仿真出错 ---")
     info(f"{e}\n")
-    import traceback
     traceback.print_exc()
 
 
