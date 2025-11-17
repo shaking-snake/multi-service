@@ -1,16 +1,23 @@
 import os
 import subprocess
-import time
+from time import sleep, time
 import re # 导入正则表达式库
 from mininet.net import Mininet
 from enum import Enum # 需要导入 FlowGenerator 中的 Enum
-import numpy as np
+from contextlib import contextmanager
+import torch
 import sys
 import signal
+import shlex
+import networkx as nx
+from mininet.topo import Topo
+from functools import partial
 
 from scapy.all import rdpcap
 from scapy.layers.inet import IP
 from .FlowGenerator import FlowType, FLOW_PROFILES
+from mininet.node import OVSKernelSwitch, RemoteController
+from mininet.link import TCLink
 
 def parse_iperf_output(output_str: str, mode: str) -> dict:
   """
@@ -192,140 +199,213 @@ def measure_latency_ping_from_output(result: str) -> float:
 
 # Generator :
 
-# 获取流指纹
-def get_flow_fingerprint(S_host, D_host, flow_profile):
-    
-  # 运行捕获
-  pcap_path = run_traffic_capture(S_host, D_host, flow_profile)
-  
-  if not os.path.exists(pcap_path):
-    print(f"⚠️ 捕获文件未找到: {pcap_path}")
-    return None
-      
-  # 使用 Scapy 读取文件
-  fingerprint_matrix = extract_flow_fingerprint(pcap_path)
-  
-  # 清理临时文件 (重要!)
-  os.remove(pcap_path)
-  
-  return fingerprint_matrix
+# 生成一个mininet网络
 
-# 从.pcap文件中获取流指纹
-def extract_flow_fingerprint(pcap_path: str, n_packets: int = 50) -> np.ndarray:
-  """
-  使用 Scapy 从 .pcap 文件中提取流指纹 (PacketSize, IAT)。
+# mininet 定义
+class GraphTopo(Topo):
+  def __init__(self, blueprint_g: nx.Graph, r2q_value: int, **opts):
+    Topo.__init__(self, **opts)
 
-  :param pcap_path: .pcap 文件的路径。
-  :param n_packets: 要提取的最大数据包数量 (N)。
-  :return: 一个 (n_packets, 2) 的 NumPy 矩阵。
-  """
-  
-  # 1. 初始化
-  features_list = []
-  last_timestamp = None
-  
+    for node_id in blueprint_g.nodes():
+      self.addSwitch(f's{node_id}', protocols='OpenFlow13')
+      self.addHost(f'h{node_id}')
+      self.addLink(f'h{node_id}', f's{node_id}', delay='0.1ms')
+
+    for u, v, data in blueprint_g.edges(data=True):
+      bw = data.get('bandwidth', 1000)
+      delay = f"{data.get('delay', 1)}ms"
+      # 这里沿用 Mininet 构造函数中设置的 r2q
+      self.addLink(f's{u}', f's{v}', delay=delay) 
+
+# mininet 启动
+@contextmanager
+def get_a_mininet(g: nx.Graph):
+  RemoteCtrl = partial(RemoteController, ip='127.0.0.1', port=6633)
+  NEW_R2Q = 80000 # 解决 HTB 警告
+
+  net = Mininet(
+    topo=GraphTopo(g, r2q_value=NEW_R2Q),
+    switch=OVSKernelSwitch,
+    link=TCLink,
+    controller=RemoteCtrl,
+  )
+
   try:
-    # 2. 使用 Scapy 读取 pcap 文件
-    # rdpcap() 将整个文件读入内存中的一个 PacketList
-    packets = rdpcap(pcap_path)
+    net.start()
+    yield net
+  finally:
+    net.stop()
+    os.system('sudo mn -c')
 
-    # 3. 循环遍历数据包
-    for packet in packets:
-      
-      # 4. 过滤：我们只关心 IP 层的数据包
-      if IP not in packet:
-        continue
-          
-      # 5. 特征提取
-      try:
-        # 特征 1: PacketSize (IP 层的总长度)
-        packet_size = float(packet[IP].len)
-        
-        # 特征 2: IAT (Inter-Arrival Time)
-        current_timestamp = float(packet.time)
-        
-        if last_timestamp is None:
-          # 第一个包的 IAT 设为 0
-          iat = 0.0
-        else:
-          iat = current_timestamp - last_timestamp
-            
-        last_timestamp = current_timestamp
-        
-        # 6. 存储特征
-        features_list.append([packet_size, iat])
-        
-        # 7. 检查是否达到 N 个包
-        if len(features_list) >= n_packets:
-          break
-    
-      except Exception as e:
-        # 处理 Scapy 解析数据包时可能发生的罕见错误
-        print(f"警告: 解析数据包时出错: {e}", file=sys.stderr)
-              
-  except Exception as e:
-    print(f"错误: 无法读取 pcap 文件 {pcap_path}: {e}", file=sys.stderr)
-    # 如果 pcap 文件损坏或不存在，返回一个全零矩阵
-    return np.zeros((n_packets, 2), dtype=np.float32)
+  return net
 
-  # 8. 转换为 NumPy 矩阵
-  num_found = len(features_list)
-  
-  if num_found == 0:
-    # 如果没有找到任何 IP 包，返回全零矩阵
-    return np.zeros((n_packets, 2), dtype=np.float32)
-      
-  matrix = np.array(features_list, dtype=np.float32)
-  
-  # 9. 填充 (Padding)
-  # 如果捕获的包少于 n_packets (例如流很短)
-  if num_found < n_packets:
-    # 创建一个 (n_packets - num_found, 2) 的零矩阵用于填充
-    padding = np.zeros((n_packets - num_found, 2), dtype=np.float32)
-    # 垂直堆叠
-    matrix = np.vstack([matrix, padding])
-      
-  return matrix
+# 发送流量并捕获包特征
+def send_packet_and_capture(
+  server, 
+  client, 
+  flow_type: FlowType, 
+  duration_sec=15, 
+  n_packets_to_capture=30, 
+  **flow_params
+  ):
+  # 发送流并抓包
+  """
+  在 Mininet 中运行 D-ITG 流量, 并同时使用 tshark 管道实时捕获特征。
 
-# 发送流并获取.pcap 文件
-def run_traffic_capture(S_host, D_host, flow_profile, N_PACKETS=50):
-    
-  temp_pcap_file = f"/tmp/fingerprint_{os.getpid()}.pcap"
-  mode = flow_profile['iperf_mode']
-  rate = flow_profile['target_rate']
+  参数:
+    net: Mininet 网络对象。
+    flow_type (str): 'voip', 'gaming', 'streaming'.
+    duration_sec (int): D-ITG 流量的*总*运行时长。
+    n_packets_to_capture (int): tshark 在捕获 N 个包后自动停止。
+    **flow_params: 传递给 generate_ditg_command 的额外参数。
   
-  # --- 根据模式启动对应的服务器 ---
-  iperf_server_cmd = f'iperf -s -p 5001'
-  if mode == 'udp':
-    iperf_server_cmd += ' -u'
-  
-  D_host.popen(iperf_server_cmd)
+  返回:
+    np.ndarray: 形状为 (N, 3) 的特征矩阵 [[Size, IAT], ...]。
+  """
 
-  correct_intf = None
-  for intf in S_host.intfNames():
-    if intf != 'lo' :
-      correct_intf = intf
+  server_ip = server.IP()
+  client_ip = client.IP()
+  
+  print(f"server ip: {server_ip} client_ip: {client_ip}")
+  # 2. 找到要监听的接口 (s1-eth1)
+  server_intf = None
+  for intf in server.intfList():
+    if intf.name != 'lo' and intf.link: # 确保它不是 'lo' 并且已连接
+      server_intf = intf
       break
+  if server_intf is None:
+    raise Exception(f"在 {server.name} 上找不到已连接的数据接口!")
+
+  switch_intf = server_intf.link.intf2 if server_intf.link.intf1 == server_intf else server_intf.link.intf1
+  switch_intf_name = switch_intf.name
   
-  if correct_intf is None:
-    print(f"错误: 找不到 {S_host.name} 的有效接口 (非 'lo')")
-    D_host.cmd('kill %iperf')
-    return None
+  # 3. [Action 1] 获取 D-ITG 命令
+  client_cmd = get_flow_command(
+    flow_type=flow_type,
+    target_ip=server_ip,
+    duration_sec=duration_sec,
+    **flow_params
+  )
 
-  capture_command = f'tcpdump -i {correct_intf} -c {N_PACKETS} -w {temp_pcap_file}'
-
-  # B. 使用 Popen 启动 tcpdump
-  tcpdump_proc = S_host.popen(capture_command, shell=True)
-
-  # C. 等待 tcpdump 启动
-  time.sleep(0.5) 
-
-  # D. 启动客户机，发送流
-  client_cmd = f'iperf -c {D_host.IP()} -p 5001 -{mode[0]} -b {rate} -t 60'
-  client_proc = S_host.popen(client_cmd, shell=True) 
-
-  tcpdump_proc.wait()
-  client_proc.terminate()
+  # 4. 准备 tshark 命令 (这是最快的方法)
+  display_filter = f"src host {client_ip} and dst host {server_ip}"
+  tshark_cmd = [
+    'sudo',
+    'tshark',
+    '-c', str(n_packets_to_capture), # 抓 N 个包后停止
+    '-i', switch_intf_name,
+    '-l', # 行缓冲 (实时)
+    '-T', 'fields',
+    '-e', 'frame.len',        # 特征 1: Size
+    '-e', 'frame.time_delta', # 特征 2: IAT
+    '-e', 'ip.src',
+    '-e', 'ip.dst',
+    '-E', 'separator=,',
+    '-f', display_filter
+  ]
   
-  return temp_pcap_file
+  feature_matrix = []
+  client_proc = None
+  tshark_proc = None
+  server_proc = None
+
+  try:
+    # 5. [Action 2] 启动流量
+    print(f"[Net] 启动 D-ITG 接收端 (h1)...")
+    server_proc = server.popen('ITGRecv')
+    sleep(1)
+  
+    # 6. [Action 3] 启动 tshark 捕获管道
+    print(f"[Capture] 启动 tshark 管道: {' '.join(tshark_cmd)}")
+    tshark_proc = subprocess.Popen(
+      tshark_cmd, 
+      stdout=subprocess.PIPE, 
+      stderr=subprocess.PIPE,
+      text=True
+    )
+
+    sleep(1)
+    print(f"[Net] 启动 D-ITG 发送端 (h2): {client_cmd}")
+    client_proc = client.popen(client_cmd)
+    # 7. [核心] 实时从管道读取并封装向量
+    for line in tshark_proc.stdout:
+      line = line.strip()
+      if not line:
+        continue
+      print(f"[RAW CAPTURE] 抓到了: {line}")
+      try:
+
+        size_str, iat_str, src_ip, dst_ip = line.split(',')
+        
+        size = float(size_str)
+        
+        # 处理第一个包 (IAT 不是数字)
+        try:
+          iat = float(iat_str)
+        except ValueError:
+          iat = 0.0 # 第一个包的 IAT 为 0
+        
+        # 实时封装成向量
+        feature_vector = [size, iat]
+        feature_matrix.append(feature_vector)
+      except ValueError as e:
+        print(f"[Parser] 跳过 tshark 行: {line}. 错误: {e}")
+      
+  except Exception as e:
+    print(f"[Error] 实验执行出错: {e}")
+  finally:
+    # 8. 清理
+    print("[Net] 清理进程...")
+    if tshark_proc: tshark_proc.terminate()
+    if client_proc: client_proc.terminate()
+    if server_proc: server_proc.terminate()
+
+  print(f"[Capture] 捕获完成. 获得 {len(feature_matrix)} 个向量。")
+  return torch.tensor(feature_matrix, dtype=float)
+
+# 根据流类型，返回不同的 D-ITG 命令。
+def get_flow_command(
+  flow_type: str, 
+  target_ip: str, 
+  duration_sec: int, 
+  **kwargs
+  ) -> str:
+    """
+    根据流量模式和参数, 生成一个 D-ITG (ITGSend) 命令字符串。
+    所有命令均使用 D-ITG (ITGSend) 工具。
+
+    参数:
+      flow_type (str): 流量模式。支持: 'voip', 'gaming', 'streaming'.
+      target_ip (str): 目标服务器的 IP 地址 (例如: '10.0.0.1').
+      duration_sec (int): 流量的总持续时间 (秒).
+    
+    返回:
+      str: 一个完整的、可在 Mininet 主机上运行的 ITGSend 命令字符串。
+    """
+    profile = FLOW_PROFILES[flow_type]
+
+    protocol = profile['protocol']
+    duration_ms = duration_sec * 1000
+    
+    # 基础命令 (所有模式通用), 明确使用 D-ITG 的 ITGSend
+    base_cmd = f"ITGSend -a {shlex.quote(target_ip)} -t {duration_ms} -T {protocol}"
+    
+    if 'ditg_preset' in profile:
+      # 使用预设 (VoIP, Gaming)
+      specific_args = profile['ditg_preset']
+    elif 'ditg_manual' in profile:
+      # 使用手动参数 (Streaming)
+      specific_args = profile['ditg_manual']
+    else:
+      raise ValueError("Profile 配置不完整")
+   
+
+    # 组合命令, 并在末尾添加 '&' 使其在后台运行
+    final_cmd = f"{base_cmd} {specific_args}"
+    
+    return final_cmd
+
+
+
+
 

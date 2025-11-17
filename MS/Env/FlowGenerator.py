@@ -4,25 +4,25 @@ import random
 class FlowType(Enum):
   VOIP = 1      # 实时会话
   STREAMING = 2 # 流媒体
-  INTERACTIVE = 3 # 交互式/游戏
+  GAMING = 3    # 游戏
 
 # 存储每种流类型的 iperf 参数和 QoE 严格要求 (用于 Reward 函数)
 FLOW_PROFILES = {
   FlowType.VOIP: {
-    'iperf_mode': 'udp',          # -u
-    'target_rate': '0.1M',        # 100 Kbps 左右的恒定速率
+    'protocol': 'UDP',       # 改名为 protocol 更通用
+    'ditg_preset': 'VoIP -x G.711.2' # D-ITG 专用参数
     'qoe_critical': {'max_delay': 150, 'max_jitter': 50}, # ms
     'reward_fn': 'E-Model'
   },
   FlowType.STREAMING: {
-    'iperf_mode': 'tcp',
-    'target_rate': '10M',         # 目标带宽 10 Mbps
+    'protocol': 'UDP',
+    'ditg_preset': 'CSa'
     'qoe_critical': {'min_bandwidth': 5, 'max_loss_rate': 1e-6}, # Mbps, %
     'reward_fn': '3GPP-QCI6'
   },
   FlowType.INTERACTIVE: {
-    'iperf_mode': 'udp',
-    'target_rate': '1M',
+    'protocol': 'TCP',
+    'ditg_manual': '-B E 2000 E 3000 -c 1460 -C 1000'    # 视频流手动参数
     'qoe_critical': {'max_delay': 50, 'max_jitter': 30}, # ms
     'reward_fn': '3GPP-QCI80'
   }
