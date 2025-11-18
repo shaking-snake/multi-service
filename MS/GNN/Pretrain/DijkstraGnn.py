@@ -50,12 +50,12 @@ def get_pyg_data_from_nx(G: nx.Graph, S_node: int, D_node: int, global_stats: di
   deg_max = global_stats['degree']['max']
 
   for i in range(num_nodes):
-      deg = G.degree(i) / (deg_max + 1e-6)
-      is_s = 1.0 if i == S_node else 0.0
-      is_d = 1.0 if i == D_node else 0.0
-      ds = min(dist_from_s.get(i, 999), 20) / 20.0
-      dd = min(dist_to_d.get(i, 999), 20) / 20.0
-      node_features_list.append([deg, is_s, is_d, ds, dd])
+    deg = G.degree(i) / (deg_max + 1e-6)
+    is_s = 1.0 if i == S_node else 0.0
+    is_d = 1.0 if i == D_node else 0.0
+    ds = min(dist_from_s.get(i, 999), 20) / 20.0
+    dd = min(dist_to_d.get(i, 999), 20) / 20.0
+    node_features_list.append([deg, is_s, is_d, ds, dd])
 
   x = torch.tensor(node_features_list, dtype=torch.float)
   return Data(x=x, edge_index=edge_index, edge_attr=edge_attr), G
@@ -126,7 +126,7 @@ class GNNPretrainModel(nn.Module):
     self.layer_norms = nn.ModuleList()
     for _ in range(num_layers):
       self.layer_norms.append(nn.LayerNorm(gnn_dim))
-      # [冲刺优化 2] 增加 heads 到 4，提升模型表达能力
+      # 增加 heads 到 4，提升模型表达能力
       self.convs.append(
         pyg_nn.GATConv(gnn_dim, gnn_dim, heads=4, concat=False, edge_dim=edge_feat_dim)
       )
@@ -139,19 +139,20 @@ class GNNPretrainModel(nn.Module):
     self.register_buffer('gamma_neutral', torch.ones(num_layers, gnn_dim))
     self.register_buffer('beta_neutral', torch.zeros(num_layers, gnn_dim))
 
-  def forward(self, data, gamma=None, beta=None):
+  def forward(self, data, gamma=None, beta=None, return_node_feats=False):
     if gamma is None: gamma = self.gamma_neutral
     if beta is None: beta = self.beta_neutral
 
     h = self.node_embed(data.x)
+
     for l in range(self.num_layers):
       h_norm = self.layer_norms[l](h)
       
       gamma_l = gamma[l]
       beta_l = beta[l]
       if gamma_l.dim() == 1: 
-          gamma_l = gamma_l.unsqueeze(0)
-          beta_l = beta_l.unsqueeze(0)
+        gamma_l = gamma_l.unsqueeze(0)
+        beta_l = beta_l.unsqueeze(0)
 
       h_modulated = gamma_l * h_norm + beta_l
       h = self.convs[l](h_modulated, data.edge_index, edge_attr=data.edge_attr)
@@ -161,4 +162,9 @@ class GNNPretrainModel(nn.Module):
     h_dst = h[data.edge_index[1]]
     edge_features = torch.cat([h_src, h_dst, data.edge_attr], dim=-1)
     
-    return self.edge_output_head(edge_features).squeeze()
+    edge_logits = self.edge_output_head(edge_features).squeeze()
+    
+    if return_node_feats:
+      return edge_logits, h  # 返回 logits 和 节点特征
+    else:
+      return edge_logits     # 仅返回 logits (兼容旧代码)
