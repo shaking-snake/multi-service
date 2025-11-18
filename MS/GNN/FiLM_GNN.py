@@ -1,5 +1,3 @@
-# 文件路径: MS/A2C/ActorCritic.py
-
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
@@ -38,8 +36,7 @@ class ActorCritic(nn.Module):
     self.film_generator = nn.Sequential(
       nn.Linear(lstm_hidden_dim, gnn_hidden_dim),
       nn.ReLU(),
-      nn.Linear(gnn_hidden_dim, self.total_film_params)
-    )
+      nn.Linear(gnn_hidden_dim, self.total_film_params))
 
     # 初始化技巧：让初始输出接近0，即gamma=1, beta=0
     with torch.no_grad():
@@ -50,8 +47,7 @@ class ActorCritic(nn.Module):
     self.gnn_model.edge_output_head = nn.Sequential(
       nn.Linear(gnn_hidden_dim * 2 + gnn_edge_dim, gnn_hidden_dim),
       nn.ReLU(),
-      nn.Linear(gnn_hidden_dim, 1)
-    )
+      nn.Linear(gnn_hidden_dim, 1))
 
     # 3. [进阶] Critic Head
     # 输入维度 = LSTM流特征(128) + GNN图特征(256)
@@ -59,8 +55,7 @@ class ActorCritic(nn.Module):
     self.critic_head = nn.Sequential(
       nn.Linear(lstm_hidden_dim + gnn_hidden_dim, gnn_hidden_dim),
       nn.ReLU(),
-      nn.Linear(gnn_hidden_dim, 1)
-    )
+      nn.Linear(gnn_hidden_dim, 1))
 
     # --- 冻结主体 ---
     for p in self.lstm_body.parameters(): p.requires_grad = False
@@ -97,7 +92,8 @@ class ActorCritic(nn.Module):
     # 4. [进阶] Critic 计算价值
     # Global Mean Pooling: 将所有节点的特征平均，得到“整张图”的特征向量
     # node_features: (Num_Nodes, 256) -> h_graph: (B, 256)
-    h_graph = global_mean_pool(node_features, graph_data.batch)
+    batch_idx = getattr(graph_data, 'batch', None)
+    h_graph = global_mean_pool(node_features, batch_idx)
     
     # 拼接：流需求 + 图状态
     # 形状: (B, 128+256) = (B, 384)
@@ -106,4 +102,4 @@ class ActorCritic(nn.Module):
     # 预测价值
     value = self.critic_head(state_fusion)
 
-    return dist, value.squeeze(1)
+    return dist, value.squeeze(1), edge_logits
