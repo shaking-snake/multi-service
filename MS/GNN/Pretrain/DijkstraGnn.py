@@ -37,13 +37,13 @@ def get_pyg_data_from_nx(G: nx.Graph, S_node: int, D_node: int, global_stats: di
   edge_attr = edge_attr.clamp(0.0, 1.0)
 
   try:
-      dist_from_s = nx.single_source_shortest_path_length(G, S_node)
+    dist_from_s = nx.single_source_shortest_path_length(G, S_node)
   except:
-      dist_from_s = {n: 999 for n in G.nodes()}
+    dist_from_s = {n: 999 for n in G.nodes()}
   try:
-      dist_to_d = nx.single_source_shortest_path_length(G, D_node)
+    dist_to_d = nx.single_source_shortest_path_length(G, D_node)
   except:
-      dist_to_d = {n: 999 for n in G.nodes()}
+    dist_to_d = {n: 999 for n in G.nodes()}
 
   num_nodes = G.number_of_nodes()
   node_features_list = []
@@ -95,25 +95,25 @@ def generate_single_sample(topo_gen, global_stats):
       return data
 
 class DynamicGraphDataset(IterableDataset):
-    def __init__(self, topo_gen, global_stats, max_samples):
-        self.topo_gen = topo_gen
-        self.stats = global_stats
-        self.max_samples = max_samples
+  def __init__(self, topo_gen, global_stats, max_samples):
+    self.topo_gen = topo_gen
+    self.stats = global_stats
+    self.max_samples = max_samples
 
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:
-            worker_seed = torch.initial_seed() % (2**32 - 1) + worker_info.id
-            random.seed(worker_seed)
-            np.random.seed(worker_seed)
-        
-        if worker_info is None:
-            iter_end = self.max_samples
-        else:
-            per_worker = int(math.ceil(self.max_samples / float(worker_info.num_workers)))
-            iter_end = min(worker_info.id * per_worker + per_worker, self.max_samples)
-        for _ in range(iter_end):
-            yield generate_single_sample(self.topo_gen, self.stats)
+  def __iter__(self):
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is not None:
+      worker_seed = torch.initial_seed() % (2**32 - 1) + worker_info.id
+      random.seed(worker_seed)
+      np.random.seed(worker_seed)
+    
+    if worker_info is None:
+      iter_end = self.max_samples
+    else:
+      per_worker = int(math.ceil(self.max_samples / float(worker_info.num_workers)))
+      iter_end = min(worker_info.id * per_worker + per_worker, self.max_samples)
+    for _ in range(iter_end):
+      yield generate_single_sample(self.topo_gen, self.stats)
 
 # === 核心类 2: GNN 模型 (增强版) ===
 class GNNPretrainModel(nn.Module):
