@@ -8,16 +8,16 @@ class Default_config:
   M_BA = 2
 
   # mbps
-  MIN_BW = 100.0
-  MAX_BW = 1000.0
+  MIN_BW = 2.0
+  MAX_BW = 20.0
 
   # %
   MIN_LOSS = 0.0 
-  MIN_LOSS = 10.0
+  MAX_LOSS = 3.0
 
   # ms
   MIN_DELAY = 1.0 
-  MAX_DELAY = 10.0
+  MAX_DELAY = 200.0
 
   # 
   MIN_NODES_NUM = 15
@@ -150,7 +150,7 @@ def get_pyg_data_from_nx(G: nx.Graph, S_node: int, D_node: int, config):
     clus = clustering.get(i, 0.0)
     pr = pagerank.get(i, 0.0) * 10.0 # 适当放大 PageRank
 
-  node_features_list.append([deg, is_s, is_d, ds, dd, betw, clus, pr])
+    node_features_list.append([deg, is_s, is_d, ds, dd, betw, clus, pr])
 
   x = torch.tensor(node_features_list, dtype=torch.float)
   return Data(x=x, edge_index=edge_index, edge_attr=edge_attr), G
