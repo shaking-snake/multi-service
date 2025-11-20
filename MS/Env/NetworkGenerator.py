@@ -17,7 +17,7 @@ class Default_config:
 
   # ms
   MIN_DELAY = 1.0 
-  MAX_DELAY = 10.0
+  MAX_DELAY = 200.0
 
   # 
   MIN_NODES_NUM = 15

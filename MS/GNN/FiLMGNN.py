@@ -6,7 +6,7 @@ import networkx as nx
 import math
 import numpy as np
 
-class FiLMGNN(nn.Module):
+class FiLMGnn(nn.Module):
   def __init__(self, node_feat_dim, gnn_dim, edge_feat_dim, num_layers=6):
     super().__init__()
     self.gnn_dim = gnn_dim
