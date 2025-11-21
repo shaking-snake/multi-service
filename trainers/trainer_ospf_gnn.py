@@ -129,9 +129,9 @@ class FocalLoss(nn.Module):
     else:
       BCE_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
     pt = torch.exp(-BCE_loss)
-
-    alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
-    F_loss = alpha_t * (1-pt)**self.gamma * BCE_loss
+ 
+    alpha_t = self.alpha * targets  + (1 - self.alpha) * (1 - targets)
+    F_loss = alpha_t * (1-pt)**self.gamma * BCE_loss * 10000
 
     if self.reduce: return torch.mean(F_loss)
     else: return F_loss
@@ -148,17 +148,18 @@ def train_worker(rank, world_size):
 
     # 2. 参数
     EPOCHS = 6000          
-    BATCH_SIZE = 256       
+    BATCH_SIZE = 512      
     TOTAL_SAMPLES = 6400   
-    LEARNING_RATE = 5e-4
+    LEARNING_RATE = 5e-12
     
     # [确认这里的维度与 NetworkGenerator 一致]
     NODE_FEAT_DIM = 10  # 10维 (含 Buffer, ProcDelay)
     EDGE_FEAT_DIM = 5   # 5维 (含 AvailBW)
     GNN_DIM = 256
     NUM_LAYERS = 6
-    
-    SAVE_PATH = "./trained_model/gnn_pretrained_model.pth"
+    LOAD_PATH = "./trained_model/trained_gnn_ospf.pth"
+    SAVE_PATH = "./trained_model/gnn_play_model.pth"
+    LOAD_PATH = SAVE_PATH
     if rank == 0:
       os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
@@ -169,15 +170,15 @@ def train_worker(rank, world_size):
       edge_feat_dim=EDGE_FEAT_DIM, 
       num_layers=NUM_LAYERS
     ).to(device)
-    if os.path.exists(SAVE_PATH):
+    if os.path.exists(LOAD_PATH):
       # 映射加载到当前 GPU 设备
       map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
       try:
-        checkpoint = torch.load(SAVE_PATH, map_location=map_location)
+        checkpoint = torch.load(LOAD_PATH, map_location=map_location)
         # 加载权重 (strict=False 以防微小结构变动)
         model.load_state_dict(checkpoint, strict=False)
         # if rank == 0:
-        print(f"[Rank {rank}] 成功加载断点: {SAVE_PATH}")
+        print(f"[Rank {rank}] 成功加载断点: {LOAD_PATH}")
       except Exception as e:
         if rank == 0:
           print(f"[Rank {rank}] 加载断点失败 (将重新训练): {e}")
@@ -188,16 +189,14 @@ def train_worker(rank, world_size):
     model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=1e-7)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=1e-15)
 
     # 定义阶段边界
-    WARMUP_END = 20
-    COSINE_END = 800  # 在第 800 轮结束 Cosine
-    loss_fn = FocalLoss(alpha=0.85, gamma=2.0)
+    loss_fn = FocalLoss(alpha=0.98, gamma=8.0)
 
-    best_recall = 0.0
-    best_acc = 0.0
+    best_recall = 0.9989
+    best_acc = 0.9
     topo_gen = TopologyGenerator(Config)
 
     # 4. 循环
@@ -275,7 +274,7 @@ def train_worker(rank, world_size):
       if global_batches > 0:
         avg_loss = metrics[0].item() / global_batches
         avg_acc = metrics[1].item() / global_batches
-        avg_recall = global_tp / (global_real_p + 1e-8)
+        avg_recall = global_tp / (global_real_p)
       else:
         avg_loss, avg_acc = 0.0, 0.0
 
