@@ -15,7 +15,7 @@ from torch_geometric.nn.glob import global_mean_pool
 from MS.A2C.ActorCritic import ActorCritic
 from MS.Env.MininetController import get_a_mininet, get_a_fingerprint, measure_path_qos
 from MS.Env.FlowGenerator import FlowGenerator
-from MS.Env.NetworkGenerator import TopologyGenerator, get_pyg_data_from_nx
+from MS.Env.NetworkGenerator import TopologyGenerator, get_pyg_data_from_nx, sample_path
 
 # ================= 配置参数 =================
 class Config:
@@ -45,7 +45,7 @@ class Config:
   SAVE_PATH = os.path.join(MODEL_DIR, "a2c_final.pth")
   # 确保这些预训练模型文件存在
   PRETRAINED_LSTM = os.path.join(MODEL_DIR, "trained_lstm.pth") 
-  PRETRAINED_GNN = os.path.join(MODEL_DIR, "gnn_pretraned_model.pth") # 注意文件名拼写是否与您实际一致
+  PRETRAINED_GNN = os.path.join(MODEL_DIR, "trained_gnn_recall.pth") # 注意文件名拼写是否与您实际一致
 
   # --- 模型结构 (需与定义保持一致) ---
   GNN_DIM = 256
@@ -57,76 +57,6 @@ class Config:
   DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CONFIG = Config()
-
-# ================= 辅助函数 1: 路径采样 =================
-def sample_path_probabilistic(edge_logits, edge_index, s_node, d_node, max_steps=20):
-  """
-  根据 GNN 输出的边分数 (Logits)，概率性地游走采样一条路径。
-  返回: (path_nodes, log_prob_sum, is_success)
-  """
-  # 构建邻接表以便快速查询: u -> [(v, edge_idx_in_tensor), ...]
-  adj = {}
-  num_edges = edge_index.shape[1]
-  for i in range(num_edges):
-    u = edge_index[0, i].item()
-    v = edge_index[1, i].item()
-    if u not in adj: adj[u] = []
-    adj[u].append((v, i))
-
-  current = s_node
-  path = [current]
-  log_probs = []
-  visited = {current}
-    
-  for _ in range(max_steps):
-    if current == d_node:
-      break # 到达终点
-        
-    if current not in adj:
-      break # 死胡同
-        
-    # 获取合法邻居 (不走回头路)
-    neighbors = adj[current]
-    valid_options = [n for n in neighbors if n[0] not in visited]
-
-    if not valid_options:
-      break # 无路可走
-        
-    # 提取候选边的 logits
-    candidate_logits = []
-    candidate_nodes = []
-    
-    for next_node, edge_idx in valid_options:
-      candidate_logits.append(edge_logits[edge_idx])
-      candidate_nodes.append(next_node)
-        
-    # 转换为局部概率分布 (Softmax)
-    logits_tensor = torch.stack(candidate_logits)
-    probs = torch.softmax(logits_tensor, dim=0)
-    
-    # 采样动作
-    dist = Categorical(probs)
-    action_idx = dist.sample()
-    
-    # 记录
-    log_prob = dist.log_prob(action_idx)
-    log_probs.append(log_prob)
-    
-    next_hop = candidate_nodes[action_idx.item()]
-    path.append(next_hop)
-    visited.add(next_hop)
-    current = next_hop
-        
-  is_success = (path[-1] == d_node)
-  
-  # 汇总整条路径的 Log Probability
-  if len(log_probs) > 0:
-    total_log_prob = torch.stack(log_probs).sum()
-  else:
-    total_log_prob = torch.tensor(0.0, device=edge_logits.device)
-      
-  return path, total_log_prob, is_success
-
 
 # ================= 主训练循环 =================
 
@@ -199,8 +129,8 @@ def run_a2c_training():
           dist, value_est, edge_logits = agent(fingerprint, pyg_data)
 
           # 4. 动作采样 (Action)
-          path, log_prob_sum, success = sample_path_probabilistic(
-            edge_logits, pyg_data.edge_index, s_node, d_node)
+          path, log_prob_sum, success = sample_path(
+            edge_logits, pyg_data.edge_index, s_node, d_node, max_steps=30)
           
           # 5. 执行与奖励 (Reward)
           if not success:

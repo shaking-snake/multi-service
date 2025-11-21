@@ -19,9 +19,9 @@ class ActorCritic(nn.Module):
     lstm_layers=2,
     
     # GNN (路径选择模块) 参数
-    gnn_node_dim=8,     # 节点特征数
     gnn_hidden_dim=256, # gnn 隐藏特征数
-    gnn_edge_dim=4,     # 边 特征数
+    gnn_node_dim=10,    # 节点特征数
+    gnn_edge_dim=5,     # 边 特征数
     gnn_layers=6,       # gnn 层数
     
     # 预训练权重路径
@@ -39,10 +39,10 @@ class ActorCritic(nn.Module):
     # ======================================================================
     
     # 偏好模块 (LSTM Body)
-    self.lstm_body = PreferenceModule(lstm_input_dim, lstm_hidden_dim, lstm_layers)
+    self.lstm_body = LstmLayer(lstm_input_dim, lstm_hidden_dim, lstm_layers)
     
     # 路径选择模块 (GNN Model) - 我们先加载整个模型，包括预训练的头
-    self.gnn_model = GNNPretrainModel(
+    self.gnn_model = FiLMGnnModel(
       gnn_node_dim, gnn_hidden_dim, gnn_edge_dim, gnn_layers
     )
 

@@ -18,8 +18,8 @@ import torch.nn.functional as F  # [关键修复] 补全 F 导入
 
 # === 导入自定义模块 ===
 from MS.GNN.FiLMGnn import FiLMGnn 
-from MS.Env.NetworkGenerator import TopologyGenerator, get_pyg_data_from_nx, DEFAULT_CONFIG
 from MS.Env.MininetController import sample_path
+from MS.Env.NetworkGenerator import TopologyGenerator, get_pyg_data_from_nx, DEFAULT_CONFIG
 
 # === 辅助函数 ===
 def setup(rank, world_size):
@@ -130,8 +130,8 @@ class FocalLoss(nn.Module):
       BCE_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
     pt = torch.exp(-BCE_loss)
  
-    alpha_t = self.alpha * targets  + (1 - self.alpha) * (1 - targets)
-    F_loss = alpha_t * (1-pt)**self.gamma * BCE_loss * 10000
+    alpha_t = self.alpha * targets * 10000  + (1 - self.alpha) * (1 - targets)
+    F_loss = alpha_t * (1-pt)**self.gamma * BCE_loss
 
     if self.reduce: return torch.mean(F_loss)
     else: return F_loss
@@ -157,9 +157,9 @@ def train_worker(rank, world_size):
     EDGE_FEAT_DIM = 5   # 5维 (含 AvailBW)
     GNN_DIM = 256
     NUM_LAYERS = 6
-    LOAD_PATH = "./trained_model/trained_gnn_ospf.pth"
+    LOAD_PATH = "./trained_model/trained_gnn_recall_ospf.pth"
     SAVE_PATH = "./trained_model/gnn_play_model.pth"
-    LOAD_PATH = SAVE_PATH
+    # LOAD_PATH = SAVE_PATH
     if rank == 0:
       os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
 
