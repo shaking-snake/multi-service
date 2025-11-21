@@ -251,11 +251,12 @@ def train_worker(rank, world_size):
       dist.barrier(device_ids=[rank])
 
   finally:
-      cleanup()
+    cleanup()
 
+# === 主程序 ===
 if __name__ == "__main__":
-    world_size = torch.cuda.device_count()
-    if world_size < 1:
-      print("❌ 需要 GPU 才能运行此脚本")
-    else:
-      mp.spawn(train_worker, args=(world_size,), nprocs=world_size, join=True)
+  world_size = torch.cuda.device_count()
+  if world_size < 1:
+    print("❌ 需要 GPU 才能运行此脚本")
+  else:
+    mp.spawn(train_worker, args=(world_size,), nprocs=world_size, join=True)
