@@ -21,14 +21,14 @@ from MS.Env.NetworkGenerator import TopologyGenerator, get_pyg_data_from_nx
 
 # === 辅助函数 ===
 def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    
-    # [修复 Barrier 警告 1] 先设置当前进程可见的 GPU
-    torch.cuda.set_device(rank)
-    
-    # 初始化进程组
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+  os.environ['MASTER_ADDR'] = 'localhost'
+  os.environ['MASTER_PORT'] = '12355'
+  
+  # [修复 Barrier 警告 1] 先设置当前进程可见的 GPU
+  torch.cuda.set_device(rank)
+  
+  # 初始化进程组
+  dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 def cleanup():
     dist.destroy_process_group()

@@ -6,20 +6,11 @@ from torch_geometric.data import Data
 class Default_config:
   # 默认拓扑生成参数
   M_BA = 2
-
-  # mbps
-  MIN_BW = 2.0
   MAX_BW = 20.0
-
-  # %
   MIN_LOSS = 0.0 
   MAX_LOSS = 3.0
-
-  # ms
   MIN_DELAY = 1.0 
   MAX_DELAY = 200.0
-
-  # 
   MIN_NODES_NUM = 15
   MAX_NODES_NUM = 30
 
@@ -48,20 +39,25 @@ class TopologyGenerator:
     
     # 1. 生成 BA 无标度网络
     G = nx.barabasi_albert_graph(n=num_nodes, m=self.m_ba)
-    
     # 2. 为节点和边添加属性
+    for n in G.nodes():
+      # Buffer Occupancy: 0.0~1.0
+      G.nodes[n]['buffer_occupancy'] = random.uniform(0.0, 0.1) 
+      # Processing Delay: ms
+      G.nodes[n]['proc_delay'] = random.uniform(0.01, 0.05)
+
     for u, v in G.edges():
       # 随机但合理的链路属性
       bw = random.uniform(self.min_bw, self.max_bw)
       delay = random.uniform(self.min_delay, self.max_delay)
       loss = random.uniform(self.min_loss, self.min_loss)
       # 存储属性
-      G[u][v]['bandwidth'] = bw
-      G[u][v]['delay'] = delay
       G[u][v]['loss'] = loss
-      # 存储容量（例如，基于带宽或QCI等级）
-      G[u][v]['capacity'] = bw * 0.8 # 假设可用容量是带宽的80%
-
+      G[u][v]['delay'] = delay
+      G[u][v]['bandwidth'] = bw
+      G[u][v]['utilization'] = 0.0    # 假设可用容量是带宽的80%
+      G[u][v]['capacity'] = bw * 0.8  # 存储容量（例如，基于带宽或QCI等级）
+      
     self.G = G
     return G
 
